@@ -216,3 +216,11 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ESP-IDF / Wokwi build files
+Traffic_Project_2/build/
+Traffic_Project_2/sdkconfig.old
+
+# Temporary files
+*.log
+*.tmp

@@ -1,0 +1,131 @@
+{
+  "version": 1,
+  "author": "Fatma",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "board-esp32-s3-devkitc-1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {
+        "serialInterface": "USB_SERIAL_JTAG"
+      }
+    },
+
+    { "type": "wokwi-led", "id": "n_red", "top": -100, "left": 300, "attrs": { "color": "red", "label": "N Red" } },
+    { "type": "wokwi-led", "id": "n_yellow", "top": -55, "left": 300, "attrs": { "color": "yellow", "label": "N Yellow" } },
+    { "type": "wokwi-led", "id": "n_green", "top": -10, "left": 300, "attrs": { "color": "green", "label": "N Green" } },
+
+    { "type": "wokwi-led", "id": "s_red", "top": 130, "left": 300, "attrs": { "color": "red", "label": "S Red" } },
+    { "type": "wokwi-led", "id": "s_yellow", "top": 175, "left": 300, "attrs": { "color": "yellow", "label": "S Yellow" } },
+    { "type": "wokwi-led", "id": "s_green", "top": 220, "left": 300, "attrs": { "color": "green", "label": "S Green" } },
+
+    { "type": "wokwi-led", "id": "e_red", "top": -100, "left": 500, "attrs": { "color": "red", "label": "E Red" } },
+    { "type": "wokwi-led", "id": "e_yellow", "top": -55, "left": 500, "attrs": { "color": "yellow", "label": "E Yellow" } },
+    { "type": "wokwi-led", "id": "e_green", "top": -10, "left": 500, "attrs": { "color": "green", "label": "E Green" } },
+
+    { "type": "wokwi-led", "id": "w_red", "top": 130, "left": 500, "attrs": { "color": "red", "label": "W Red" } },
+    { "type": "wokwi-led", "id": "w_yellow", "top": 175, "left": 500, "attrs": { "color": "yellow", "label": "W Yellow" } },
+    { "type": "wokwi-led", "id": "w_green", "top": 220, "left": 500, "attrs": { "color": "green", "label": "W Green" } },
+
+    { "type": "wokwi-pushbutton", "id": "north_switch", "top": 330, "left": 180, "attrs": { "color": "green", "label": "North Switch" } },
+    { "type": "wokwi-pushbutton", "id": "south_switch", "top": 330, "left": 330, "attrs": { "color": "green", "label": "South Switch" } },
+    { "type": "wokwi-pushbutton", "id": "east_switch", "top": 330, "left": 480, "attrs": { "color": "blue", "label": "East Switch" } },
+    { "type": "wokwi-pushbutton", "id": "west_switch", "top": 330, "left": 630, "attrs": { "color": "blue", "label": "West Switch" } },
+
+    { "type": "wokwi-pushbutton", "id": "ped_request", "top": -150, "left": 180, "attrs": { "color": "white", "label": "Pedestrian Request" } },
+    { "type": "wokwi-pushbutton", "id": "service_switch", "top": -150, "left": 430, "attrs": { "color": "purple", "label": "Service / FOTA Switch" } },
+    { "type": "wokwi-pushbutton", "id": "north_emergency", "top": -150, "left": 680, "attrs": { "color": "red", "label": "North Emergency" } },
+
+    {
+      "type": "wokwi-microsd-card",
+      "id": "secure_ext_flash",
+      "top": 430,
+      "left": 700,
+      "attrs": {}
+    },
+
+    {
+      "type": "wokwi-text",
+      "id": "secure_ext_flash_label",
+      "top": 395,
+      "left": 675,
+      "attrs": {
+        "text": "Secure External Flash\\nBackup Old SW / Rollback Image"
+      }
+    },
+
+    {
+      "type": "wokwi-text",
+      "id": "secure_ic_label",
+      "top": 220,
+      "left": 690,
+      "attrs": {
+        "text": "Microchip Secure IC\\nATECC608 Secure Element\\nRoot of Trust / Keys / Signature Check"
+      }
+    }
+  ],
+
+  "connections": [
+    [ "esp:4", "n_red:A", "red", [] ],
+    [ "esp:5", "n_yellow:A", "yellow", [] ],
+    [ "esp:6", "n_green:A", "green", [] ],
+
+    [ "esp:17", "s_red:A", "red", [] ],
+    [ "esp:18", "s_yellow:A", "yellow", [] ],
+    [ "esp:8", "s_green:A", "green", [] ],
+
+    [ "esp:7", "e_red:A", "red", [] ],
+    [ "esp:15", "e_yellow:A", "yellow", [] ],
+    [ "esp:16", "e_green:A", "green", [] ],
+
+    [ "esp:12", "w_red:A", "red", [] ],
+    [ "esp:13", "w_yellow:A", "yellow", [] ],
+    [ "esp:14", "w_green:A", "green", [] ],
+
+    [ "n_red:C", "esp:GND.1", "black", [] ],
+    [ "n_yellow:C", "esp:GND.1", "black", [] ],
+    [ "n_green:C", "esp:GND.1", "black", [] ],
+
+    [ "s_red:C", "esp:GND.1", "black", [] ],
+    [ "s_yellow:C", "esp:GND.1", "black", [] ],
+    [ "s_green:C", "esp:GND.1", "black", [] ],
+
+    [ "e_red:C", "esp:GND.2", "black", [] ],
+    [ "e_yellow:C", "esp:GND.2", "black", [] ],
+    [ "e_green:C", "esp:GND.2", "black", [] ],
+
+    [ "w_red:C", "esp:GND.2", "black", [] ],
+    [ "w_yellow:C", "esp:GND.2", "black", [] ],
+    [ "w_green:C", "esp:GND.2", "black", [] ],
+
+    [ "esp:10", "north_switch:1.l", "green", [] ],
+    [ "north_switch:2.l", "esp:GND.1", "black", [] ],
+
+    [ "esp:11", "south_switch:1.l", "green", [] ],
+    [ "south_switch:2.l", "esp:GND.1", "black", [] ],
+
+    [ "esp:35", "east_switch:1.l", "blue", [] ],
+    [ "east_switch:2.l", "esp:GND.2", "black", [] ],
+
+    [ "esp:36", "west_switch:1.l", "blue", [] ],
+    [ "west_switch:2.l", "esp:GND.2", "black", [] ],
+
+    [ "esp:37", "ped_request:1.l", "white", [] ],
+    [ "ped_request:2.l", "esp:GND.1", "black", [] ],
+
+    [ "esp:38", "service_switch:1.l", "purple", [] ],
+    [ "service_switch:2.l", "esp:GND.2", "black", [] ],
+
+    [ "esp:39", "north_emergency:1.l", "red", [] ],
+    [ "north_emergency:2.l", "esp:GND.1", "black", [] ],
+
+    [ "esp:1", "secure_ext_flash:SCK", "blue", [] ],
+    [ "esp:2", "secure_ext_flash:DI", "green", [] ],
+    [ "esp:3", "secure_ext_flash:DO", "orange", [] ],
+    [ "esp:9", "secure_ext_flash:CS", "purple", [] ],
+    [ "esp:3V3", "secure_ext_flash:VCC", "red", [] ],
+    [ "esp:GND.1", "secure_ext_flash:GND", "black", [] ]
+  ]
+}

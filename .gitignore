@@ -1,20 +1,16 @@
-# Python
+# Combined .gitignore
+venv/
 __pycache__/
+*.log
+*.tmp# Combined .gitignore
+venv/
+__pycache__/
+*.log
+*.tmp
 *.pyc
-
-# Database
 *.db
-
-# Environment
 .env
-
-# Keys / Certificates
 *.pem
 *.key
 *.crt
-
-# Uploads
 uploads/
-
-# Virtual environment
-venv/

@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Management Console Authentication</title>
+    <script src="/static/tailwind.js"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-md bg-gray-900 border border-gray-800 rounded-2xl shadow-2xl p-8 space-y-6">
+        <h1 class="text-xl font-bold tracking-tight text-white uppercase text-center">FOTA Control Plane Sign In</h1>
+        {% if error %}
+        <div class="bg-red-950/40 border border-red-900/60 text-red-400 text-xs rounded-lg p-3 text-center font-mono">{{ error }}</div>
+        {% endif %}
+        <form action="/login" method="POST" class="space-y-4">
+            <div>
+                <label class="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Username</label>
+                <input type="text" name="username" required class="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm text-gray-200 focus:outline-none focus:border-amber-600">
+            </div>
+            <div>
+                <label class="block text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Password</label>
+                <input type="password" name="password" required class="w-full bg-gray-950 border border-gray-800 rounded-lg px-4 py-2 text-sm text-gray-200 focus:outline-none focus:border-amber-600">
+            </div>
+            <button type="submit" class="w-full bg-amber-600 hover:bg-amber-700 text-white font-medium text-sm py-2 rounded-lg border border-amber-500 transition">Login</button>
+        </form>
+    </div>
+</body>
+</html>

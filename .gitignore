@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Combined .gitignore
 venv/
 __pycache__/
@@ -14,3 +15,16 @@ __pycache__/
 *.key
 *.crt
 uploads/
+=======
+__pycache__/
+*.pyc
+
+cms.db
+
+.env
+
+uploads/
+
+.venv/
+venv/
+>>>>>>> origin/cms

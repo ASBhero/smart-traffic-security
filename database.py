@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
@@ -14,4 +15,22 @@ engine = create_engine(
 
 SessionLocal = sessionmaker(bind=engine)
 
+=======
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+
+
+DATABASE_URL = "sqlite:///cms.db"
+
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={
+        "check_same_thread": False
+    }
+)
+
+SessionLocal = sessionmaker(bind=engine)
+
+>>>>>>> origin/cms
 Base = declarative_base()

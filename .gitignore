@@ -14,3 +14,9 @@ __pycache__/
 *.key
 *.crt
 uploads/
+__pycache__/ 
+*.pyc 
+mqtt/data/*.db 
+mqtt/logs/*.log 
+firmware_downloaded.bin 
+app/certs/ 

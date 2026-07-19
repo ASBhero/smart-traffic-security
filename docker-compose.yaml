@@ -1,0 +1,37 @@
+services:
+  fota-server:
+    build: .
+    container_name: fota_backend
+    ports:
+      - "8081:8000"
+      # In production: add mTLS port for secure device communication
+      # - "8443:8443"
+    volumes:
+      # Maps your local ./app directory to /app inside the container.
+      # This allows "hot-reloading" — when you change Python code locally, 
+      # the container updates instantly without rebuilding.
+      - ./app:/app
+      # Firmware storage
+      - ./app/firmware:/app/firmware
+      # Certificate storage (for future mTLS implementation)
+      - ./app/certs:/app/certs
+    environment:
+      - ENV=development
+      - FOTA_MODE=mtls_transport_boundary
+    depends_on:
+      - mqtt-broker
+    restart: always
+
+  mqtt-broker:
+    image: eclipse-mosquitto:2.0
+    container_name: mqtt_broker
+    ports:
+      - "1883:1883"  # MQTT (unencrypted, internal only)
+      # - "8883:8883"  # MQTT over TLS (future: production)
+    volumes:
+      - ./mqtt/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mqtt/data:/mosquitto/data
+      - ./mqtt/logs:/mosquitto/log
+    environment:
+      - MOSQUITTO_ALLOW_ANONYMOUS=true
+    restart: always

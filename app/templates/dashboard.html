@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cryptographic FOTA Orchestrator</title>
+    <script src="/static/tailwind.js"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 font-sans min-h-screen">
+
+    <header class="border-b border-gray-800 bg-gray-900/50 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
+                <span class="text-lg font-semibold tracking-wider text-white">FOTA ORCHESTRATOR v5.3</span>
+            </div>
+            <div class="flex items-center space-x-3">
+                <a href="/api/v1/export/fleet?operator=Dashboard_Admin" 
+                   class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium px-4 py-2 rounded-lg transition border border-emerald-500 shadow-lg shadow-emerald-900/20 flex items-center space-x-1">
+                    <span>Export Signed Compliance CSV</span>
+                </a>
+                <a href="/logout" 
+                   class="bg-gray-800 hover:bg-gray-700 text-red-400 text-xs font-medium px-4 py-2 rounded-lg transition border border-gray-700 flex items-center space-x-1">
+                    <span>Logout</span>
+                </a>
+                <span class="text-xs text-gray-400 bg-gray-800 px-3 py-1.5 rounded-md border border-gray-700">
+                    Host: <span class="text-emerald-400 font-mono">localhost:8081</span>
+                </span>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+        
+        <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+            <div class="bg-gray-900 border border-gray-800 p-5 rounded-xl space-y-2">
+                <p class="text-xs font-medium uppercase tracking-wider text-gray-400">Total Managed Nodes</p>
+                <p id="metric-total" class="text-3xl font-bold text-white font-mono">{{ metrics.total_devices }}</p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 p-5 rounded-xl space-y-2">
+                <p class="text-xs font-medium uppercase tracking-wider text-gray-400">Secure Status Nodes</p>
+                <p id="metric-secure" class="text-3xl font-bold text-emerald-400 font-mono">{{ metrics.secure_devices }}</p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 p-5 rounded-xl space-y-2">
+                <p class="text-xs font-medium uppercase tracking-wider text-gray-400">Outdated Status Nodes</p>
+                <p id="metric-outdated" class="text-3xl font-bold text-amber-500 font-mono">{{ metrics.outdated_devices }}</p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 p-5 rounded-xl space-y-2">
+                <p class="text-xs font-medium uppercase tracking-wider text-gray-400">Total API Hits Logged</p>
+                <p id="metric-requests" class="text-3xl font-bold text-blue-400 font-mono">{{ metrics.total_requests }}</p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 p-5 rounded-xl space-y-2 lg:col-span-1 md:col-span-2">
+                <p class="text-xs font-medium uppercase tracking-wider text-gray-400">Last System Interaction</p>
+                <p id="metric-last-seen" class="text-sm font-semibold text-gray-300 pt-2 truncate font-mono">{{ metrics.last_interaction }}</p>
+            </div>
+        </section>
+
+        <section class="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+            
+            <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden lg:col-span-2 shadow-2xl">
+                <div class="px-6 py-4 border-b border-gray-800 bg-gray-900/50 flex justify-between items-center">
+                    <h2 class="text-sm font-semibold uppercase tracking-wider text-gray-200">Real-Time Registry Snapshot</h2>
+                    <span class="text-[10px] bg-blue-950 text-blue-300 font-mono px-2 py-0.5 rounded border border-blue-800">Auto Refreshing</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="border-b border-gray-800 bg-gray-950/50 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+                                <th class="px-6 py-3">Device Node Details</th>
+                                <th class="px-6 py-3">Firmware Version</th>
+                                <th class="px-6 py-3">Security Status</th>
+                                <th class="px-6 py-3">Hardware Security Profile</th>
+                                <th class="px-6 py-3">Active Feature Flags</th>
+                                <th class="px-6 py-3 text-right">Last Handshake</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fleet-table-body" class="divide-y divide-gray-800/60 text-sm">
+                            {% if fleet %}
+                            {% for device in fleet %}
+                            <tr class="hover:bg-gray-800/30 transition">
+                                <td class="px-6 py-4">
+                                    <span class="block font-medium text-white font-mono text-xs">{{ device.id }}</span>
+                                    <span class="block text-[11px] text-gray-400 font-mono">{{ device.hardware }} &bull; {{ device.intersection_id }}</span>
+                                </td>
+                                <td class="px-6 py-4 font-mono text-xs text-gray-300">v{{ device.version }}</td>
+                                <td class="px-6 py-4">
+                                    {% if device.status == 'SECURE / OK' %}
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-950 text-emerald-400 border border-emerald-800">SECURE</span>
+                                    {% else %}
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-950 text-amber-400 border border-amber-800">OUTDATED</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-6 py-4 space-y-0.5 text-xs">
+                                    {% if device.capabilities %}
+                                    <span class="block text-gray-400 font-mono text-[11px]">Flash: {{ device.capabilities.total_flash_kb }} KB</span>
+                                    <span class="block {% if device.capabilities.secure_boot_enabled %}text-emerald-400{% else %}text-red-400{% endif %}">
+                                        Secure Boot: {{ 'Enabled' if device.capabilities.secure_boot_enabled else 'Disabled' }}
+                                    </span>
+                                    <span class="block {% if device.capabilities.flash_encryption_active %}text-emerald-400{% else %}text-red-400{% endif %}">
+                                        Flash Enc: {{ 'Active' if device.capabilities.flash_encryption_active else 'Inactive' }}
+                                    </span>
+                                    <span class="block text-gray-400 font-mono text-[10px]">Crypto: {{ device.capabilities.hardware_crypto_accelerator }}</span>
+                                    {% else %}
+                                    <span class="text-gray-500 italic text-xs">No metrics synced</span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-6 py-4">
+                                    <div class="flex flex-wrap gap-1 max-w-[180px]">
+                                        {% if device.features %}
+                                        {% for feat in device.features %}
+                                            {% if feat.is_enabled %}
+                                            <span class="text-[10px] bg-blue-950 text-blue-300 border border-blue-800/60 px-1.5 py-0.5 rounded font-mono">
+                                                {{ feat.feature_name }}
+                                            </span>
+                                            {% endif %}
+                                        {% endfor %}
+                                        {% else %}
+                                        <span class="text-gray-500 text-xs">None active</span>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                                <td class="px-6 py-4 text-right font-mono text-xs text-gray-400">{{ device.last_seen }}</td>
+                            </tr>
+                            {% endfor %}
+                            {% else %}
+                            <tr>
+                                <td colspan="6" class="px-6 py-8 text-center text-gray-500 italic">No edge targets registered on this control server loop.</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="space-y-6 lg:col-span-1">
+                <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4 shadow-2xl">
+                    <h2 class="text-sm font-semibold uppercase tracking-wider text-gray-200 border-b border-gray-800 pb-3">Active Binary Profile</h2>
+                    <div class="space-y-3 text-xs font-mono">
+                        {% if release %}
+                        <div>
+                            <span class="block text-gray-400 text-[10px] uppercase">Target Hardware</span>
+                            <span class="text-gray-200 font-medium text-sm">{{ release.hardware_target }}</span>
+                        </div>
+                        <div>
+                            <span class="block text-gray-400 text-[10px] uppercase">Release Version</span>
+                            <span class="text-emerald-400 font-medium text-sm">v{{ release.version }}</span>
+                        </div>
+                        <div>
+                            <span class="block text-gray-400 text-[10px] uppercase">File Name</span>
+                            <span class="text-gray-200">{{ release.filename }}</span>
+                        </div>
+                        <div>
+                            <span class="block text-gray-400 text-[10px] uppercase">Local File SHA-256 Checksum</span>
+                            <span class="text-gray-400 text-[11px] break-all block bg-gray-950 p-2 rounded mt-1 border border-gray-800">{{ checksum }}</span>
+                        </div>
+                        {% else %}
+                        <p class="text-gray-500 text-xs">No release data available</p>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-4 shadow-2xl">
+                    <h2 class="text-sm font-semibold uppercase tracking-wider text-gray-200 border-b border-gray-800 pb-3">Forensic Incident Stream</h2>
+                    <div id="log-container" class="space-y-3 max-h-[320px] overflow-y-auto pr-1">
+                        {% if logs %}
+                        {% for log in logs %}
+                        <div class="bg-gray-950 border-l-2 {% if log.action == 'FOTA_UPDATE_SUCCESS' %}border-emerald-500{% else %}border-blue-500{% endif %} p-3 rounded-r-lg space-y-1">
+                            <div class="flex justify-between items-center text-[11px] font-mono">
+                                <span class="font-bold text-gray-200">{{ log.device_id }}</span>
+                                <span class="text-gray-500">{{ log.timestamp }}</span>
+                            </div>
+                            <p class="text-[10px] font-semibold text-blue-400 font-mono uppercase tracking-tight">{{ log.action }}</p>
+                            <p class="text-xs text-gray-400 leading-relaxed">{{ log.details }}</p>
+                        </div>
+                        {% endfor %}
+                        {% else %}
+                        <p class="text-gray-500 italic text-xs text-center py-4">No logged interactions streaming.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+        </section>
+    </main>
+
+    <script>
+        async function updateDashboardMetrics() {
+            try {
+                const response = await fetch('/api/v1/fleet-status');
+                
+                if (response.status === 401) {
+                    window.location.href = '/login';
+                    return;
+                }
+                if (!response.ok) return;
+                const data = await response.json();
+
+                document.getElementById('metric-total').innerText = data.metrics.total_devices;
+                document.getElementById('metric-secure').innerText = data.metrics.secure_devices;
+                document.getElementById('metric-outdated').innerText = data.metrics.outdated_devices;
+                document.getElementById('metric-requests').innerText = data.metrics.total_requests;
+                document.getElementById('metric-last-seen').innerText = data.metrics.last_interaction;
+
+                const tableBody = document.getElementById('fleet-table-body');
+                if (data.fleet.length === 0) {
+                    tableBody.innerHTML = `<tr><td colspan="6" class="px-6 py-8 text-center text-gray-500 italic">No edge targets registered on this control server loop.</td></tr>`;
+                } else {
+                    tableBody.innerHTML = data.fleet.map(device => {
+                        const statusBadge = device.status === 'SECURE / OK' 
+                            ? `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-950 text-emerald-400 border border-emerald-800">SECURE</span>`
+                            : `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-950 text-amber-400 border border-amber-800">OUTDATED</span>`;
+
+                        let capsBlock = `<span class="text-gray-500 italic text-xs">No metrics synced</span>`;
+                        if (device.capabilities) {
+                            const bootText = device.capabilities.secure_boot_enabled ? 'Enabled' : 'Disabled';
+                            const bootColor = device.capabilities.secure_boot_enabled ? 'text-emerald-400' : 'text-red-400';
+                            const encText = device.capabilities.flash_encryption_active ? 'Active' : 'Inactive';
+                            const encColor = device.capabilities.flash_encryption_active ? 'text-emerald-400' : 'text-red-400';
+
+                            capsBlock = `
+                                <span class="block text-gray-400 font-mono text-[11px]">Flash: ${device.capabilities.total_flash_kb} KB</span>
+                                <span class="block ${bootColor}">Secure Boot: ${bootText}</span>
+                                <span class="block ${encColor}">Flash Enc: ${encText}</span>
+                                <span class="block text-gray-400 font-mono text-[10px]">Crypto: ${device.capabilities.hardware_crypto_accelerator}</span>
+                            `;
+                        }
+
+                        let featuresBlock = `<span class="text-gray-500 text-xs">None active</span>`;
+                        const activeFeatures = device.features.filter(f => f.is_enabled);
+                        if (activeFeatures.length > 0) {
+                            featuresBlock = `<div class="flex flex-wrap gap-1 max-w-[180px]">` + 
+                                activeFeatures.map(f => `<span class="text-[10px] bg-blue-950 text-blue-300 border border-blue-800/60 px-1.5 py-0.5 rounded font-mono">${f.feature_name}</span>`).join('') + 
+                                `</div>`;
+                        }
+
+                        return `
+                            <tr class="hover:bg-gray-800/30 transition">
+                                <td class="px-6 py-4">
+                                    <span class="block font-medium text-white font-mono text-xs">${device.id}</span>
+                                    <span class="block text-[11px] text-gray-400 font-mono">${device.hardware} &bull; ${device.intersection_id}</span>
+                                </td>
+                                <td class="px-6 py-4 font-mono text-xs text-gray-300">v${device.version}</td>
+                                <td class="px-6 py-4">${statusBadge}</td>
+                                <td class="px-6 py-4 space-y-0.5 text-xs">${capsBlock}</td>
+                                <td class="px-6 py-4">${featuresBlock}</td>
+                                <td class="px-6 py-4 text-right font-mono text-xs text-gray-400">${device.last_seen}</td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
+
+                const logContainer = document.getElementById('log-container');
+                if (data.audit_logs.length === 0) {
+                    logContainer.innerHTML = `<p class="text-gray-500 italic text-xs text-center py-4">No logged interactions streaming.</p>`;
+                } else {
+                    logContainer.innerHTML = data.audit_logs.map(log => {
+                        const borderClass = log.action === 'FOTA_UPDATE_SUCCESS' ? 'border-emerald-500' : 'border-blue-500';
+                        return `
+                            <div class="bg-gray-950 border-l-2 ${borderClass} p-3 rounded-r-lg space-y-1">
+                                <div class="flex justify-between items-center text-[11px] font-mono">
+                                    <span class="font-bold text-gray-200">${log.device_id}</span>
+                                    <span class="text-gray-500">${log.timestamp}</span>
+                                </div>
+                                <p class="text-[10px] font-semibold text-blue-400 font-mono uppercase tracking-tight">${log.action}</p>
+                                <p class="text-xs text-gray-400 leading-relaxed">${log.details}</p>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+            } catch (error) {
+                console.error("Dashboard background network synchronization anomaly encountered:", error);
+            }
+        }
+
+        setInterval(updateDashboardMetrics, 3500);
+    </script>
+</body>
+</html>

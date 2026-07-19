@@ -1,0 +1,12 @@
+{
+  "device_id": "EDGE-001",
+  "hardware": "ESP32-S3",
+  "firmware_version": "1.2.5",
+  "security_status": "SECURE / OK",
+  "intersection_id": "fw-2024-v1.2",
+  "total_flash_kb": 8192,
+  "secure_boot_enabled": true,
+  "flash_encryption_active": true,
+  "hardware_crypto_accelerator": "AES",
+  "active_features": ["TLS_1_3", "OTA_DELTA"]
+}

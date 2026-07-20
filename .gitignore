@@ -1,30 +1,17 @@
-<<<<<<< HEAD
 # Combined .gitignore
 venv/
+.venv/
 __pycache__/
-*.log
-*.tmp# Combined .gitignore
-venv/
-__pycache__/
+*.pyc
 *.log
 *.tmp
-*.pyc
 *.db
 .env
 *.pem
 *.key
 *.crt
 uploads/
-=======
-__pycache__/
-*.pyc
-
-cms.db
-
-.env
-
-uploads/
-
-.venv/
-venv/
->>>>>>> origin/cms
+mqtt/data/*.db
+mqtt/logs/*.log
+firmware_downloaded.bin
+app/certs/

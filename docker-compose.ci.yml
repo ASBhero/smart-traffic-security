@@ -1,0 +1,36 @@
+# CI-specific Docker Compose override.
+#
+# Usage:
+#   docker compose -f docker-compose.yaml -f docker-compose.ci.yml up -d
+#
+# What this override does:
+#   - Removes the ./app:/app volume mount that overwrites the built image (breaks CI)
+#   - Removes host paths that don't exist in the CI environment
+#   - Sets CI-specific environment variables (Vault disabled, dev mode)
+#   - Uses aggressive health-check settings for faster CI feedback
+#   - Overrides 'restart: always' with 'no' so compose down is clean
+
+services:
+  fota-server:
+    # Remove all host volume mounts — use only what the Docker image built
+    volumes: []
+    environment:
+      - ENV=ci
+      - FOTA_MODE=ci_integration_test
+      # Point Vault at a non-existent address so health_check() gracefully fails
+      - VAULT_URL=http://127.0.0.1:18200
+      - VAULT_TOKEN=ci-test-token
+    # Override restart policy for CI — we want compose down to be clean
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  mqtt-broker:
+    # Remove host volume mounts for logs/data that may not exist in CI
+    volumes:
+      - ./mqtt/config/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    restart: "no"

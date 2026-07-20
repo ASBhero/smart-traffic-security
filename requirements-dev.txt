@@ -1,0 +1,6 @@
+# Development and test dependencies
+# Install with: pip install -r requirements-dev.txt
+
+pytest>=8.0.0
+httpx>=0.25.0
+starlette>=0.40.0

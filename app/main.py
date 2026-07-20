@@ -11,8 +11,6 @@ from pydantic import BaseModel
 from pathlib import Path
 from ssl_config import create_ssl_context, get_tls_version_string
 from mqtt_publisher import FOTAMQTTPublisher
-<<<<<<< HEAD
-=======
 from vault_kms_client import get_vault_client
 
 DB_FILE = "fota_orchestrator.db"
@@ -22,8 +20,6 @@ CERTS_DIR = "./app/certs"
 # Initialize MQTT publisher (optional, non-blocking)
 mqtt_publisher = FOTAMQTTPublisher(broker_host="mqtt-broker", enabled=True)
 
-<<<<<<< HEAD
-=======
 # Get Vault KMS client
 vault_client = get_vault_client()
 

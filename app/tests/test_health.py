@@ -79,19 +79,17 @@ class TestAuthenticationGuard:
 # ---------------------------------------------------------------------------
 
 class TestDeviceRegistration:
-    REGISTRATION_PAYLOAD = {
-        "device_id": "esp32-test-001",
-        "hardware": "ESP32-S3",
-        "certificate_fingerprint": "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
-        "certificate_expiry": "2035-01-01T00:00:00Z",
-        "metadata": {"location": "lab", "purpose": "ci-test"}
-    }
-
     def test_register_new_device_returns_success(self, client):
         """Registering a new device must return HTTP 200 with status=success."""
         response = client.post(
             "/api/v1/devices/register",
-            json=self.REGISTRATION_PAYLOAD,
+            json={
+                "device_id": "esp32-reg-001",  # unique device_id per test
+                "hardware": "ESP32-S3",
+                "certificate_fingerprint": "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99",
+                "certificate_expiry": "2035-01-01T00:00:00Z",
+                "metadata": {"location": "lab", "purpose": "ci-test"}
+            },
             headers={"X-Client-Cert-CN": "ci-test-device-001"}
         )
         assert response.status_code == 200
@@ -102,7 +100,12 @@ class TestDeviceRegistration:
         """Registration response must echo the certificate CN."""
         response = client.post(
             "/api/v1/devices/register",
-            json=self.REGISTRATION_PAYLOAD,
+            json={
+                "device_id": "esp32-reg-002",  # different device_id — avoids UNIQUE violation
+                "hardware": "ESP32-S3",
+                "certificate_fingerprint": "11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00",
+                "certificate_expiry": "2035-01-01T00:00:00Z"
+            },
             headers={"X-Client-Cert-CN": "ci-test-device-002"}
         )
         assert response.status_code == 200
@@ -111,7 +114,12 @@ class TestDeviceRegistration:
 
     def test_register_same_device_twice_is_idempotent(self, client):
         """Re-registering an existing device must not raise an error."""
-        payload = dict(self.REGISTRATION_PAYLOAD, device_id="esp32-dupe-001")
+        payload = {
+            "device_id": "esp32-dupe-001",
+            "hardware": "ESP32-S3",
+            "certificate_fingerprint": "AA:BB:CC:00:11:22:33:44:55:66:77:88:99:DD:EE:FF",
+            "certificate_expiry": "2035-01-01T00:00:00Z"
+        }
         headers = {"X-Client-Cert-CN": "ci-dupe-device-001"}
         r1 = client.post("/api/v1/devices/register", json=payload, headers=headers)
         r2 = client.post("/api/v1/devices/register", json=payload, headers=headers)

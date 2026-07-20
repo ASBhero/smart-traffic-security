@@ -7,7 +7,6 @@ All database operations use a temporary SQLite file that is cleaned up after eac
 """
 import os
 import sys
-import tempfile
 import pytest
 
 # Ensure the app directory is on the path so imports work

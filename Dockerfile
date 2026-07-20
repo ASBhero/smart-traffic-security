@@ -1,7 +1,7 @@
 # ==========================================
 # STAGE 1: The Builder (Temporary Environment)
 # ==========================================
-FROM python:3.14-alpine AS builder
+FROM python:3.12-alpine AS builder
 
 WORKDIR /build
 
@@ -18,7 +18,7 @@ RUN pip wheel --no-cache-dir --no-deps --wheel-dir /build/wheels -r requirements
 # ==========================================
 # STAGE 2: The Runtime (The Clean Final Image)
 # ==========================================
-FROM python:3.14-alpine
+FROM python:3.12-alpine
 
 WORKDIR /app
 

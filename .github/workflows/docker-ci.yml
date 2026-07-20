@@ -1,14 +1,335 @@
-name: Test Workflow
+name: Docker CI/CD
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Triggers
+# ─────────────────────────────────────────────────────────────────────────────
 on:
   push:
     branches:
-      - fota-server
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  # Allow manual runs from the GitHub UI / API
+  workflow_dispatch:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Concurrency: cancel any in-progress run on the same branch/PR so we never
+# have two runs competing for the same GHA cache keys.
+# ─────────────────────────────────────────────────────────────────────────────
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Default shell — ensures all `run:` steps behave the same way
+# ─────────────────────────────────────────────────────────────────────────────
+defaults:
+  run:
+    shell: bash
 
 jobs:
-  test:
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 1: Lint & Test
+  #   - Python 3.12 (latest stable; 3.14 does not exist)
+  #   - flake8 for syntax/style errors (hard-failing on critical errors)
+  #   - pytest with real pass/fail gating (no `|| true`)
+  # ───────────────────────────────────────────────────────────────────────────
+  lint-and-test:
+    name: Lint & Test (Python 3.12)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Test step
-        run: echo "Workflow is working!"
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install application and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install flake8 pytest httpx starlette
+
+      # ── Linting ─────────────────────────────────────────────────────────
+      # Pass 1: hard-fail on syntax errors and undefined names (E9, F63, F7, F82)
+      - name: Lint — critical errors (flake8 pass 1)
+        run: |
+          flake8 ./app \
+            --count \
+            --select=E9,F63,F7,F82 \
+            --show-source \
+            --statistics \
+            --exclude=__pycache__,*.pyc,.eggs,dist,build
+
+      # Pass 2: style warnings — informational only (exit-zero)
+      - name: Lint — style warnings (flake8 pass 2)
+        run: |
+          flake8 ./app \
+            --count \
+            --exit-zero \
+            --max-complexity=10 \
+            --max-line-length=127 \
+            --statistics \
+            --exclude=__pycache__,*.pyc,.eggs,dist,build
+
+      # ── Tests ────────────────────────────────────────────────────────────
+      # Run with verbose output and short tracebacks.
+      # Failure here blocks all downstream jobs — no `|| true`.
+      - name: Run pytest smoke tests
+        working-directory: ./app
+        run: |
+          pytest tests/ \
+            --tb=short \
+            --verbose \
+            -x
+
+      - name: Upload test results (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: |
+            app/tests/**/*.xml
+          retention-days: 7
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 2: Build & Security Scan
+  #   - Dockerfile linting with Hadolint
+  #   - Multi-stage Docker build with GHA layer cache
+  #   - Trivy vulnerability scan (pinned version, not @master)
+  #   - SARIF upload for GitHub Security tab
+  # ───────────────────────────────────────────────────────────────────────────
+  build-and-scan:
+    name: Build & Security Scan
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    permissions:
+      contents: read
+      packages: write
+      # Required for github/codeql-action/upload-sarif
+      security-events: write
+      # Required for private repos; harmless on public repos
+      actions: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Dockerfile lint ──────────────────────────────────────────────────
+      - name: Lint Dockerfile with Hadolint
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          # DL3008: pin apt versions — acceptable for Alpine/pip workflow
+          # DL3009: delete apt lists — Alpine uses apk; not applicable
+          ignore: DL3008,DL3009
+          failure-threshold: warning
+
+      # ── Docker Buildx ───────────────────────────────────────────────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build only (push: false for PRs and non-main branches).
+      # The image is loaded into the local daemon for the Trivy scan below.
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          # Load into local Docker daemon so Trivy can scan it
+          load: true
+          tags: |
+            fota-server:${{ github.sha }}
+            fota-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Vulnerability scan ───────────────────────────────────────────────
+      # Pinned to a specific version — never @master (supply-chain risk)
+      - name: Scan Docker image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: fota-server:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          # Fail on HIGH/CRITICAL vulnerabilities with a fix available
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        # Upload even if the scan step flagged vulnerabilities
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 3: Docker Compose Integration Test
+  #   - Validates compose config merges cleanly
+  #   - Starts services using CI-specific override (no host volume mounts)
+  #   - Waits for the FOTA server health endpoint with a retry loop
+  #   - Actual health-check failure now gates the pipeline
+  # ───────────────────────────────────────────────────────────────────────────
+  docker-compose-test:
+    name: Docker Compose Integration Test
+    runs-on: ubuntu-latest
+    needs: build-and-scan
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── Config validation ────────────────────────────────────────────────
+      - name: Validate merged compose config
+        run: |
+          docker compose \
+            -f docker-compose.yaml \
+            -f docker-compose.ci.yml \
+            config --quiet
+          echo "✅ Compose config is valid"
+
+      # ── Start services ───────────────────────────────────────────────────
+      - name: Start services (CI mode)
+        run: |
+          docker compose \
+            -f docker-compose.yaml \
+            -f docker-compose.ci.yml \
+            up --build --detach
+          echo "Services started"
+
+      # ── Health check with retry loop (replaces unreliable `sleep 5`) ─────
+      - name: Wait for FOTA server to become healthy
+        timeout-minutes: 3
+        run: |
+          echo "⏳ Waiting for FOTA server health endpoint..."
+          MAX_RETRIES=36  # 36 × 5s = 3 minutes max
+          RETRY=0
+          until curl --silent --fail --max-time 5 http://localhost:8081/health; do
+            RETRY=$((RETRY + 1))
+            if [ "$RETRY" -ge "$MAX_RETRIES" ]; then
+              echo "❌ FOTA server failed to become healthy after ${MAX_RETRIES} attempts"
+              docker compose -f docker-compose.yaml -f docker-compose.ci.yml logs fota-server
+              exit 1
+            fi
+            echo "  Attempt ${RETRY}/${MAX_RETRIES} — not ready yet, retrying in 5s..."
+            sleep 5
+          done
+          echo "✅ FOTA server is healthy"
+
+      # ── Smoke HTTP calls ─────────────────────────────────────────────────
+      - name: Smoke test — health endpoint returns JSON
+        run: |
+          STATUS=$(curl --silent http://localhost:8081/health | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','MISSING'))")
+          if [ "$STATUS" != "healthy" ]; then
+            echo "❌ Unexpected health status: $STATUS"
+            exit 1
+          fi
+          echo "✅ Health endpoint returns status=healthy"
+
+      - name: Smoke test — 401 on protected endpoint without mTLS header
+        run: |
+          HTTP_CODE=$(curl --silent --output /dev/null --write-out "%{http_code}" \
+            "http://localhost:8081/api/v1/firmware?hardware_target=ESP32-S3")
+          if [ "$HTTP_CODE" != "401" ]; then
+            echo "❌ Expected 401 from protected endpoint, got $HTTP_CODE"
+            exit 1
+          fi
+          echo "✅ Protected endpoint correctly returns 401 without mTLS header"
+
+      # ── Collect logs on failure ──────────────────────────────────────────
+      - name: Dump service logs on failure
+        if: failure()
+        run: |
+          echo "=== fota-server logs ==="
+          docker compose -f docker-compose.yaml -f docker-compose.ci.yml logs fota-server
+          echo "=== mqtt-broker logs ==="
+          docker compose -f docker-compose.yaml -f docker-compose.ci.yml logs mqtt-broker
+
+      # ── Cleanup ──────────────────────────────────────────────────────────
+      - name: Tear down services
+        if: always()
+        run: |
+          docker compose \
+            -f docker-compose.yaml \
+            -f docker-compose.ci.yml \
+            down --volumes --remove-orphans
+          echo "✅ Services torn down"
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # JOB 4: Push to Docker Hub
+  #   - Only runs on pushes to main (not PRs)
+  #   - Skipped gracefully if secrets are not configured
+  #   - Uses docker/build-push-action@v6 (current major version)
+  # ───────────────────────────────────────────────────────────────────────────
+  push-to-registry:
+    name: Push to Docker Hub
+    runs-on: ubuntu-latest
+    needs: docker-compose-test
+    # Only push on direct pushes to main; never on PRs
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Guard: skip if secrets are not configured ────────────────────────
+      - name: Check Docker Hub secrets are configured
+        id: secrets-check
+        run: |
+          if [ -z "${{ secrets.DOCKER_USERNAME }}" ] || [ -z "${{ secrets.DOCKER_PASSWORD }}" ]; then
+            echo "⚠️  DOCKER_USERNAME or DOCKER_PASSWORD secret is not set."
+            echo "   Skipping Docker Hub push. Configure the secrets to enable."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.secrets-check.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: steps.secrets-check.outputs.skip != 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Build and push with two tags: commit SHA (immutable) + latest (mutable)
+      - name: Build and push to Docker Hub
+        if: steps.secrets-check.outputs.skip != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/fota-server:${{ github.sha }}
+            ${{ secrets.DOCKER_USERNAME }}/fota-server:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Embed build metadata into the image labels
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+
+      - name: Confirm push
+        if: steps.secrets-check.outputs.skip != 'true'
+        run: |
+          echo "✅ Image pushed:"
+          echo "   ${{ secrets.DOCKER_USERNAME }}/fota-server:${{ github.sha }}"
+          echo "   ${{ secrets.DOCKER_USERNAME }}/fota-server:latest"

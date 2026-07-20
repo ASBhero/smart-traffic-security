@@ -75,20 +75,19 @@ class TestRegistrationNegative:
         )
         assert resp.status_code == 422
 
-    def test_register_empty_device_id_returns_422(self, client):
-        """An empty device_id string must be rejected with 422."""
+    def test_register_null_device_id_returns_422(self, client):
+        """A null device_id must be rejected with 422 (required str field)."""
         resp = client.post(
             "/api/v1/devices/register",
             json={
-                "device_id": "",
+                "device_id": None,  # null — Pydantic v2 rejects None for required str
                 "hardware": "ESP32-S3",
                 "certificate_fingerprint": "AA:BB:CC",
                 "certificate_expiry": "2035-01-01T00:00:00Z",
             },
             headers={"X-Client-Cert-CN": "ci-neg-002"},
         )
-        # FastAPI/Pydantic rejects empty string for a required str field
-        assert resp.status_code in (422, 400)
+        assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------

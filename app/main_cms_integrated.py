@@ -1,3 +1,8 @@
+"""
+FOTA Server with Vault KMS + CMS Ledger Integration
+Complete firmware distribution with signing and blockchain validation
+"""
+
 import os
 import sqlite3
 import json
@@ -11,9 +16,8 @@ from pydantic import BaseModel
 from pathlib import Path
 from ssl_config import create_ssl_context, get_tls_version_string
 from mqtt_publisher import FOTAMQTTPublisher
-<<<<<<< HEAD
-=======
 from vault_kms_client import get_vault_client
+from cms_client import get_cms_client
 
 DB_FILE = "fota_orchestrator.db"
 FIRMWARE_DIR = "./app/firmware"
@@ -22,10 +26,11 @@ CERTS_DIR = "./app/certs"
 # Initialize MQTT publisher (optional, non-blocking)
 mqtt_publisher = FOTAMQTTPublisher(broker_host="mqtt-broker", enabled=True)
 
-<<<<<<< HEAD
-=======
 # Get Vault KMS client
 vault_client = get_vault_client()
+
+# Get CMS client
+cms_client = get_cms_client()
 
 def init_db():
     print("[DIAGNOSTIC] Starting init_db()...", flush=True)
@@ -63,9 +68,10 @@ def init_db():
             signature_algorithm TEXT NOT NULL,
             signature_hex TEXT NOT NULL,
             public_key_hex TEXT NOT NULL,
+            ledger_hash TEXT,
             rollback_prevention_level INTEGER DEFAULT 0,
             released_at TEXT NOT NULL,
-            ledger_hash TEXT,
+            cms_status TEXT,
             metadata TEXT
         )
     """)
@@ -96,6 +102,7 @@ def init_db():
             ledger_status TEXT,
             ledger_response TEXT,
             device_certificate_cn TEXT,
+            cms_ledger_hash TEXT,
             FOREIGN KEY (device_certificate_cn) REFERENCES devices(certificate_cn)
         )
     """)
@@ -111,6 +118,7 @@ def ensure_directories():
     """Create required directories for firmware and certificates"""
     os.makedirs(FIRMWARE_DIR, exist_ok=True)
     os.makedirs(CERTS_DIR, exist_ok=True)
+    os.makedirs("./shared/certs", exist_ok=True)
     print(f"[DIAGNOSTIC] Directories ensured: {FIRMWARE_DIR}, {CERTS_DIR}", flush=True)
 
 @asynccontextmanager
@@ -120,44 +128,46 @@ async def lifespan(app: FastAPI):
         init_db()
         ensure_directories()
         mqtt_publisher.connect()  # Optional notification layer
-
+        
         # Check Vault KMS health
         vault_ready = await vault_client.health_check()
         if vault_ready:
             print("[DIAGNOSTIC] Vault KMS is ready for operations", flush=True)
-            # Get Root CA certificate
             ca_cert = await vault_client.get_root_ca()
             if ca_cert:
                 print("[DIAGNOSTIC] Root CA certificate loaded from Vault", flush=True)
         else:
             print("[DIAGNOSTIC] WARNING: Vault KMS not accessible (will retry on demand)", flush=True)
+        
+        # Check CMS health
+        cms_ready = await cms_client.health_check()
+        if cms_ready:
+            print("[DIAGNOSTIC] CMS is ready for operations", flush=True)
+        else:
+            print("[DIAGNOSTIC] WARNING: CMS not accessible (will retry on demand)", flush=True)
+    
     except Exception as e:
         print(f"[DIAGNOSTIC] CRITICAL ERROR DURING DB INIT: {e}", flush=True)
+    
     print("[DIAGNOSTIC] Lifespan startup sequence finished passing control to Uvicorn.", flush=True)
     yield
     print("[DIAGNOSTIC] Lifespan shutdown sequence triggered.", flush=True)
     mqtt_publisher.disconnect()  # Cleanup on shutdown
 
-app = FastAPI(title="Secure FOTA Orchestrator Server — mTLS + MQTT Notifications", lifespan=lifespan)
+app = FastAPI(
+    title="Secure FOTA Orchestrator Server — Vault KMS + CMS Ledger + MQTT",
+    lifespan=lifespan
+)
 
 def get_device_certificate_cn(request: Request) -> str:
-    """
-    Extract device identity from mTLS client certificate CN.
-    In production with mTLS, FastAPI receives the cert via:
-    - Direct uvicorn SSL context, or
-    - Request headers set by reverse proxy/load balancer
-    
-    For now, check X-Client-Cert-CN header (debug mode).
-    """
+    """Extract device identity from mTLS client certificate CN"""
     cert_cn = request.headers.get("X-Client-Cert-CN")
     if not cert_cn:
         raise HTTPException(status_code=401, detail="Missing mTLS client certificate")
     return cert_cn
 
 def get_device_from_certificate(cert_cn: str) -> dict:
-    """
-    Validate that the certificate CN corresponds to a registered device.
-    """
+    """Validate that the certificate CN corresponds to a registered device"""
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
@@ -238,28 +248,65 @@ def compute_file_hash(file_path: str) -> str:
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint with TLS and MQTT status"""
+    """Health check endpoint with Vault, CMS, TLS and MQTT status"""
     mqtt_status = mqtt_publisher.get_status()
+    vault_ready = await vault_client.health_check()
+    cms_ready = await cms_client.health_check()
+    
     return {
         "status": "healthy",
-        "service": "FOTA Orchestrator mTLS Server",
+        "service": "FOTA Orchestrator — Vault KMS + CMS Ledger + MQTT",
         "tls_requirement": "TLS v1.2 minimum (TLS v1.3 supported)",
-        "architecture": "Transport Boundary (mTLS + HTTPS Pull) + Verification Boundary (ECDSA-SHA256 + Ledger) + Notification Layer (MQTT optional)",
+        "architecture": "Transport (mTLS) + Verification (ECDSA-SHA256 via Vault) + Immutability (CMS Ledger) + Notification (MQTT)",
+        "vault_kms": {
+            "status": "connected" if vault_ready else "disconnected",
+            "endpoint": "http://127.0.0.1:8200/v1/",
+            "role": "ECDSA signing + PKI management"
+        },
+        "cms_ledger": {
+            "status": "connected" if cms_ready else "disconnected",
+            "endpoint": "http://127.0.0.1:8000/api/v1/",
+            "role": "Blockchain ledger + firmware registry"
+        },
         "mqtt": mqtt_status,
         "channels": {
-            "https_transport": "Firmware download (secure, always required)",
-            "mqtt_notification": "Update notifications (optional, convenience)"
-        },
-        "endpoints": {
-            "device_registration": "POST /api/v1/devices/register (mTLS required)",
-            "firmware_list": "GET /api/v1/firmware (mTLS required)",
-            "firmware_metadata": "GET /api/v1/firmware/{version}/metadata (mTLS required)",
-            "firmware_binary": "GET /api/v1/firmware/{version}/binary (mTLS required)",
-            "firmware_upload": "POST /api/v1/firmware/upload (publishes MQTT notification)",
-            "ledger_validation": "POST /api/v1/ledger/validate-hash (mTLS required)",
-            "audit_trail": "GET /api/v1/audit/pull-events (mTLS required)",
-            "mqtt_status": "GET /api/v1/mqtt/status"
+            "https_transport": "Firmware download (always required)",
+            "vault_signing": "Firmware signing (ECDSA-SHA256)",
+            "cms_ledger": "Immutable blockchain record",
+            "mqtt_notification": "Device alerts (optional)"
         }
+    }
+
+@app.get("/api/v1/vault/status")
+async def get_vault_status():
+    """Get Vault KMS status"""
+    vault_ready = await vault_client.health_check()
+    seal_status = await vault_client.get_seal_status()
+    
+    return {
+        "status": "connected" if vault_ready else "disconnected",
+        "vault_endpoint": vault_client.vault_url,
+        "transit_key": vault_client.transit_key_name,
+        "pki_role": vault_client.pki_role,
+        "seal_status": seal_status
+    }
+
+@app.get("/api/v1/cms/status")
+async def get_cms_status():
+    """Get CMS ledger status"""
+    cms_ready = await cms_client.health_check()
+    
+    return {
+        "status": "connected" if cms_ready else "disconnected",
+        "cms_endpoint": cms_client.cms_url,
+        "api_version": cms_client.api_version,
+        "features": [
+            "Device registration",
+            "Firmware ledger registration",
+            "Hash validation",
+            "Status tracking",
+            "Certificate management"
+        ]
     }
 
 # ============================================================================
@@ -280,10 +327,7 @@ async def register_device(
     registration: DeviceRegistration,
     cert_cn: str = Depends(get_device_certificate_cn)
 ):
-    """
-    Register a device using its mTLS client certificate CN as primary identity.
-    The certificate CN becomes the device's unique identifier.
-    """
+    """Register a device and register in CMS"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     
@@ -318,12 +362,20 @@ async def register_device(
     conn.commit()
     conn.close()
     
-    log_audit_event(cert_cn, registration.device_id, "DEVICE_REGISTERED", details=f"Device {registration.device_id} registered with cert CN {cert_cn}")
+    # Register in CMS
+    cms_result = await cms_client.register_device(
+        device_id=registration.device_id,
+        public_key="-----BEGIN PUBLIC KEY-----\n(placeholder)\n-----END PUBLIC KEY-----"
+    )
+    
+    log_audit_event(cert_cn, registration.device_id, "DEVICE_REGISTERED", 
+                   details=f"Device {registration.device_id} registered with cert CN {cert_cn}, CMS status: {cms_result.get('status') if cms_result else 'failed'}")
     
     return {
         "status": "success",
         "certificate_cn": cert_cn,
         "device_id": registration.device_id,
+        "cms_registered": cms_result is not None,
         "registered_at": now
     }
 
@@ -333,20 +385,17 @@ async def list_available_firmware(
     hardware_target: str,
     cert_cn: str = Depends(get_device_certificate_cn)
 ) -> dict:
-    """
-    Device pulls the list of available firmware versions for its hardware.
-    (HTTPS PULL mechanism - Transport Boundary)
-    """
+    """Device pulls list of available firmware versions"""
     device = get_device_from_certificate(cert_cn)
     firmware_list = get_available_firmware(hardware_target, device.get("current_firmware_version"))
     
-    log_audit_event(cert_cn, device["device_id"], "FIRMWARE_LIST_PULLED", details=f"Device pulled firmware list for {hardware_target}")
+    log_audit_event(cert_cn, device["device_id"], "FIRMWARE_LIST_PULLED", 
+                   details=f"Device pulled firmware list for {hardware_target}")
     
     return {
         "status": "success",
         "hardware_target": hardware_target,
-        "available_firmware": firmware_list,
-        "note": "If MQTT notifications were received, firmware version should match one below"
+        "available_firmware": firmware_list
     }
 
 @app.get("/api/v1/firmware/{version}/metadata")
@@ -355,19 +404,17 @@ async def get_firmware_sig_and_key(
     version: str,
     cert_cn: str = Depends(get_device_certificate_cn)
 ) -> dict:
-    """
-    Device pulls firmware metadata: signature, public key, and ledger hash.
-    Used for Verification Boundary (Asymmetric Code Signing + Ledger Check).
-    (HTTPS PULL mechanism - Verification Boundary)
-    """
+    """Device pulls firmware metadata: signature, public key, ledger hash"""
     device = get_device_from_certificate(cert_cn)
     firmware = get_firmware_metadata(version)
     
     if not firmware:
-        log_audit_event(cert_cn, device["device_id"], "FIRMWARE_PULL_FAILED", firmware_version=version, details=f"Firmware {version} not found")
+        log_audit_event(cert_cn, device["device_id"], "FIRMWARE_PULL_FAILED", 
+                       firmware_version=version, details=f"Firmware {version} not found")
         raise HTTPException(status_code=404, detail=f"Firmware version {version} not found")
     
-    log_audit_event(cert_cn, device["device_id"], "FIRMWARE_METADATA_PULLED", firmware_version=version, binary_hash=firmware["binary_hash"])
+    log_audit_event(cert_cn, device["device_id"], "FIRMWARE_METADATA_PULLED", 
+                   firmware_version=version, binary_hash=firmware["binary_hash"])
     
     return {
         "status": "success",
@@ -375,8 +422,11 @@ async def get_firmware_sig_and_key(
         "binary_hash": firmware["binary_hash"],
         "signature_algorithm": firmware["signature_algorithm"],
         "signature_hex": firmware["signature_hex"],
+        "signature_source": "Vault Transit Engine (ECDSA-SHA256)",
         "public_key_hex": firmware["public_key_hex"],
+        "public_key_source": "Vault PKI",
         "ledger_hash": firmware["ledger_hash"],
+        "ledger_source": "CMS Blockchain",
         "note": "Device should verify signature and query ledger before installing"
     }
 
@@ -386,23 +436,23 @@ async def pull_firmware_binary(
     version: str,
     cert_cn: str = Depends(get_device_certificate_cn)
 ):
-    """
-    Device pulls the firmware binary file over secure HTTPS/mTLS.
-    (HTTPS PULL mechanism - Transport Boundary)
-    """
+    """Device pulls firmware binary over secure HTTPS/mTLS"""
     device = get_device_from_certificate(cert_cn)
     firmware = get_firmware_metadata(version)
     
     if not firmware:
-        log_audit_event(cert_cn, device["device_id"], "FIRMWARE_PULL_FAILED", firmware_version=version, details=f"Firmware {version} not found")
+        log_audit_event(cert_cn, device["device_id"], "FIRMWARE_PULL_FAILED", 
+                       firmware_version=version, details=f"Firmware {version} not found")
         raise HTTPException(status_code=404, detail=f"Firmware version {version} not found")
     
     binary_path = Path(firmware["binary_path"])
     if not binary_path.exists():
-        log_audit_event(cert_cn, device["device_id"], "FIRMWARE_PULL_FAILED", firmware_version=version, details=f"Binary file not found on server")
+        log_audit_event(cert_cn, device["device_id"], "FIRMWARE_PULL_FAILED", 
+                       firmware_version=version, details=f"Binary file not found on server")
         raise HTTPException(status_code=500, detail="Firmware binary not available")
     
-    log_audit_event(cert_cn, device["device_id"], "FIRMWARE_BINARY_PULLED", firmware_version=version, binary_hash=firmware["binary_hash"])
+    log_audit_event(cert_cn, device["device_id"], "FIRMWARE_BINARY_PULLED", 
+                   firmware_version=version, binary_hash=firmware["binary_hash"])
     
     return FileResponse(
         path=binary_path,
@@ -411,7 +461,7 @@ async def pull_firmware_binary(
     )
 
 # ============================================================================
-# VERIFICATION BOUNDARY ENDPOINTS (Ledger Integration)
+# VERIFICATION BOUNDARY ENDPOINTS (Ledger Integration with CMS)
 # ============================================================================
 
 class LedgerQueryRequest(BaseModel):
@@ -425,11 +475,7 @@ async def query_ledger_for_hash(
     ledger_query: LedgerQueryRequest,
     cert_cn: str = Depends(get_device_certificate_cn)
 ) -> dict:
-    """
-    Device validates firmware against blockchain CMS (immutable ledger).
-    This endpoint queries the ledger and returns validation status.
-    (Ready for Blockchain CMS integration)
-    """
+    """Device validates firmware against blockchain CMS ledger"""
     device = get_device_from_certificate(cert_cn)
     
     conn = sqlite3.connect(DB_FILE)
@@ -437,22 +483,38 @@ async def query_ledger_for_hash(
     
     now = datetime.utcnow().isoformat() + "Z"
     
+    # Query CMS ledger
+    print(f"[FOTA] Querying CMS ledger for hash: {ledger_query.firmware_hash[:16]}...", flush=True)
+    cms_validation = await cms_client.validate_firmware_hash(
+        firmware_hash=ledger_query.firmware_hash,
+        device_id=device["device_id"]
+    )
+    
+    ledger_status = "invalid"
+    cms_ledger_hash = None
+    if cms_validation:
+        ledger_status = "valid" if cms_validation.get("valid") else "invalid"
+        cms_ledger_hash = cms_validation.get("ledger_hash")
+        print(f"[CMS] Validation result: {ledger_status}", flush=True)
+    else:
+        print(f"[CMS] Validation failed or CMS not accessible", flush=True)
+        ledger_status = "pending_validation"
+    
     # Log the ledger query
     cursor.execute("""
-        INSERT INTO ledger_queries (firmware_hash, query_timestamp, device_certificate_cn)
-        VALUES (?, ?, ?)
-    """, (ledger_query.firmware_hash, now, cert_cn))
+        INSERT INTO ledger_queries (firmware_hash, query_timestamp, device_certificate_cn, ledger_status, cms_ledger_hash)
+        VALUES (?, ?, ?, ?, ?)
+    """, (ledger_query.firmware_hash, now, cert_cn, ledger_status, cms_ledger_hash))
     
     conn.commit()
     conn.close()
     
-    # TODO: Integrate with Blockchain CMS
-    ledger_status = "pending_validation"
     ledger_response = {
         "status": ledger_status,
         "firmware_hash": ledger_query.firmware_hash,
         "timestamp": now,
-        "message": "Awaiting blockchain CMS validation (colleague's responsibility)"
+        "source": "CMS Blockchain Ledger",
+        "ledger_hash": cms_ledger_hash
     }
     
     log_audit_event(
@@ -478,9 +540,7 @@ async def get_pull_audit_trail(
     limit: int = 100,
     cert_cn: str = Depends(get_device_certificate_cn)
 ) -> dict:
-    """
-    Retrieve immutable audit trail of all pull events for this device.
-    """
+    """Retrieve immutable audit trail"""
     device = get_device_from_certificate(cert_cn)
     
     conn = sqlite3.connect(DB_FILE)
@@ -502,15 +562,8 @@ async def get_pull_audit_trail(
     }
 
 # ============================================================================
-# NOTIFICATION LAYER (MQTT - Optional Enhancement)
+# FIRMWARE UPLOAD WITH VAULT KMS + CMS LEDGER
 # ============================================================================
-
-class FirmwareUpload(BaseModel):
-    """Firmware upload request with metadata"""
-    version: str
-    hardware_target: str
-    urgency: str = "recommended"
-    release_notes: Optional[str] = None
 
 @app.post("/api/v1/firmware/upload")
 async def upload_firmware(
@@ -521,55 +574,97 @@ async def upload_firmware(
     file: UploadFile = File(...)
 ):
     """
-    Upload firmware binary and publish MQTT notification.
-    HTTPS channel: Firmware secure upload and storage
-    MQTT channel: Instant notification to devices (optional)
+    Upload firmware, sign with Vault KMS, register in CMS ledger, publish MQTT
+    
+    Complete flow:
+    1. Save firmware binary
+    2. Compute SHA-256 hash
+    3. Sign with Vault Transit Engine
+    4. Register in CMS blockchain ledger
+    5. Store metadata in database
+    6. Publish MQTT notification
     """
     try:
-        # Save firmware to disk
+        # 1. Save firmware to disk
         firmware_path = f"{FIRMWARE_DIR}/firmware-{version}.bin"
         with open(firmware_path, "wb") as f:
             content = await file.read()
             f.write(content)
         
-        # Compute hash
+        # 2. Compute hash
         binary_hash = compute_file_hash(firmware_path)
+        print(f"[FIRMWARE] Computed SHA-256 hash: {binary_hash[:32]}...", flush=True)
         
-        # Store metadata in database
+        # 3. Sign firmware using Vault KMS
+        print(f"[FIRMWARE] Signing with Vault KMS...", flush=True)
+        signature = await vault_client.sign_firmware(binary_hash)
+        
+        if not signature:
+            raise Exception("Failed to sign firmware with Vault KMS")
+        
+        print(f"[FIRMWARE] Signed: {signature[:50]}...", flush=True)
+        
+        # Get public key from Vault
+        public_key = await vault_client.get_public_key()
+        if not public_key:
+            raise Exception("Failed to retrieve public key from Vault")
+        
+        # 4. Register in CMS ledger
+        print(f"[CMS] Registering firmware in blockchain ledger...", flush=True)
+        cms_result = await cms_client.upload_firmware(
+            firmware_name=f"firmware-{version}.bin",
+            firmware_hash=binary_hash,
+            firmware_signature=signature,
+            hardware_target=hardware_target,
+            version=version
+        )
+        
+        cms_status = "registered" if cms_result else "failed"
+        ledger_hash = cms_result.get("ledger_hash") if cms_result else None
+        
+        if cms_status == "failed":
+            print(f"[WARNING] CMS registration failed, but continuing with local storage", flush=True)
+        else:
+            print(f"[CMS] Ledger registration successful: {ledger_hash}", flush=True)
+        
+        # 5. Store in database
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         
         now = datetime.utcnow().isoformat() + "Z"
         
-        # Check if firmware already exists
         cursor.execute("SELECT id FROM firmware WHERE version = ?", (version,))
         exists = cursor.fetchone()
         
         if exists:
-            # Update existing
             cursor.execute("""
                 UPDATE firmware SET 
                     binary_path = ?, 
                     binary_hash = ?,
+                    signature_hex = ?,
+                    public_key_hex = ?,
+                    ledger_hash = ?,
+                    cms_status = ?,
                     released_at = ?
                 WHERE version = ?
-            """, (firmware_path, binary_hash, now, version))
+            """, (firmware_path, binary_hash, signature, public_key, ledger_hash, cms_status, now, version))
         else:
-            # Insert new
             cursor.execute("""
                 INSERT INTO firmware 
                 (version, hardware_target, binary_path, binary_hash, signature_algorithm, 
-                 signature_hex, public_key_hex, released_at, ledger_hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 signature_hex, public_key_hex, ledger_hash, cms_status, released_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 version, hardware_target, firmware_path, binary_hash,
-                "ECDSA-SHA256", "placeholder_signature", "placeholder_public_key", now, "placeholder_ledger_hash"
+                "ECDSA-SHA256-VAULT", signature, public_key, ledger_hash, cms_status, now
             ))
         
         conn.commit()
         conn.close()
         
-        # Publish MQTT notification (optional, non-blocking)
+        print(f"[FIRMWARE] Stored in database with ledger_hash: {ledger_hash}", flush=True)
+        
+        # 6. Publish MQTT notification
         mqtt_notified = False
         if mqtt_publisher.connected:
             mqtt_notified = mqtt_publisher.publish_firmware_available(
@@ -585,21 +680,31 @@ async def upload_firmware(
             "server", "admin", "FIRMWARE_UPLOADED",
             firmware_version=version,
             binary_hash=binary_hash,
-            details=f"Firmware {version} uploaded for {hardware_target} (MQTT notification: {mqtt_notified})"
+            signature_valid=True,
+            details=f"Firmware {version} signed by Vault, registered in CMS ledger (hash: {ledger_hash}), notified via MQTT"
         )
+        
+        print(f"[FIRMWARE] Upload complete for version {version}", flush=True)
         
         return {
             "status": "success",
             "version": version,
             "hardware_target": hardware_target,
             "binary_hash": binary_hash,
-            "file_size": len(content),
-            "transport_channel": "HTTPS (secure upload)",
-            "notification_channel": {
-                "mqtt_enabled": mqtt_publisher.enabled,
-                "mqtt_connected": mqtt_publisher.connected,
-                "mqtt_notification_sent": mqtt_notified,
-                "notification_topic": f"fota/notifications/{hardware_target}/firmware_available"
+            "binary_size": len(content),
+            "signature_hex": signature,
+            "signature_algorithm": "ECDSA-SHA256",
+            "signature_source": "Vault Transit Engine (fota-key)",
+            "public_key_hex": public_key,
+            "public_key_source": "Vault PKI (fota-devices role)",
+            "ledger_hash": ledger_hash,
+            "ledger_source": "CMS Blockchain",
+            "cms_status": cms_status,
+            "channels": {
+                "transport": "HTTPS (secure upload)",
+                "signing": "Vault Transit Engine (HSM-backed)",
+                "ledger": "CMS Blockchain (immutable)",
+                "notification": "MQTT" if mqtt_notified else "disabled"
             },
             "timestamp": now
         }
@@ -608,7 +713,12 @@ async def upload_firmware(
         log_audit_event("server", "admin", "FIRMWARE_UPLOAD_FAILED", 
                        firmware_version=version,
                        details=f"Upload failed: {str(e)}")
+        print(f"[FIRMWARE] Upload failed: {str(e)}", flush=True)
         raise HTTPException(status_code=500, detail=f"Firmware upload failed: {str(e)}")
+
+# ============================================================================
+# NOTIFICATION LAYER (MQTT)
+# ============================================================================
 
 @app.post("/api/v1/notifications/maintenance")
 async def publish_maintenance_notification(
@@ -617,10 +727,7 @@ async def publish_maintenance_notification(
     end_time: str,
     reason: str = "Scheduled maintenance"
 ):
-    """
-    Publish maintenance window notification via MQTT.
-    Devices can prepare for server downtime.
-    """
+    """Publish maintenance window notification via MQTT"""
     if not mqtt_publisher.connected:
         raise HTTPException(status_code=503, detail="MQTT broker not connected")
     
@@ -638,10 +745,7 @@ async def publish_maintenance_notification(
     return {
         "status": "success" if success else "failed",
         "hardware_target": hardware_target,
-        "start_time": start_time,
-        "end_time": end_time,
-        "notification_channel": "MQTT",
-        "mqtt_published": success
+        "notification_channel": "MQTT"
     }
 
 @app.post("/api/v1/notifications/rollback")
@@ -650,10 +754,7 @@ async def publish_rollback_notification(
     version: str,
     reason: str = "If needed"
 ):
-    """
-    Publish rollback availability notification via MQTT.
-    Devices can know previous version is available.
-    """
+    """Publish rollback availability notification"""
     if not mqtt_publisher.connected:
         raise HTTPException(status_code=503, detail="MQTT broker not connected")
     
@@ -672,26 +773,16 @@ async def publish_rollback_notification(
         "status": "success" if success else "failed",
         "hardware_target": hardware_target,
         "version": version,
-        "notification_channel": "MQTT",
-        "mqtt_published": success
+        "notification_channel": "MQTT"
     }
 
 @app.get("/api/v1/mqtt/status")
 async def get_mqtt_status():
-    """
-    Get MQTT notification layer status.
-    Shows whether notifications are available.
-    """
+    """Get MQTT notification layer status"""
     return {
         "notification_layer": mqtt_publisher.get_status(),
-        "mqtt_topics_available": [
-            "fota/notifications/{hardware_target}/firmware_available",
-            "fota/notifications/{hardware_target}/maintenance_window",
-            "fota/notifications/{hardware_target}/rollback_available"
-        ],
         "channels": {
-            "https": "Firmware transport (always required, secure)",
-            "mqtt": "Notifications (optional enhancement, best-effort)"
-        },
-        "note": "Devices work with or without MQTT. Firmware downloads always use HTTPS/mTLS regardless of MQTT availability."
+            "https": "Firmware transport (always required)",
+            "mqtt": "Notifications (optional)"
+        }
     }

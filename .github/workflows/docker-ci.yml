@@ -1,0 +1,25 @@
+name: Docker CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - fota-server
+  pull_request:
+    branches:
+      - main
+      - develop
+      - fota-server
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Build Docker image
+        run: docker build -t fota-server:latest .
+      
+      - name: Test image
+        run: docker run --rm fota-server:latest echo "Build successful!"

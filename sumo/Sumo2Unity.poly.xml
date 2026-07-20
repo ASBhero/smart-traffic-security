@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- generated on 2026-04-05 17:02:18 by Eclipse SUMO netedit Version 1.22.0
+-->
+
+<additional xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/additional_file.xsd">
+    <!-- Shapes -->
+    <poly id="po_0" type="train " color="red" fill="0" layer="0.00" shape="-97.018916,24.929449 120.988071,26.392583 121.231927,-61.883177 -97.994339,-65.784868 -97.018916,24.929449"/>
+    <poly id="po_1" type="roadside " color="235,227,227" fill="1" layer="0.00" shape="-87.191532,4.445571 94.863811,0.609721 96.044072,-46.600741 0.737953,-43.355021 0.442888,-6.766914 8.409653,-6.766914 8.114588,-36.273452 88.372372,-39.519171 87.782242,-7.061979 -88.371793,-4.701456 -87.486597,4.150506"/>
+    <poly id="po_2" type="residential" color="235,227,227" fill="1" layer="0.00" shape="91.718414,19.452597 24.953969,21.951800 24.596940,4.100345 92.432472,2.672228 91.004356,19.809626"/>
+    <poly id="po_3" type="wood" color="230,87,14" fill="1" layer="0.00" shape="-10.748943,-14.465169 -80.012591,-13.037053 -80.369620,-37.672062 -10.748943,-39.814237 -11.105972,-14.108140"/>
+</additional>

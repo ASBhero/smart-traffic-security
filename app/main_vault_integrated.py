@@ -11,8 +11,6 @@ from pydantic import BaseModel
 from pathlib import Path
 from ssl_config import create_ssl_context, get_tls_version_string
 from mqtt_publisher import FOTAMQTTPublisher
-<<<<<<< HEAD
-=======
 from vault_kms_client import get_vault_client
 
 DB_FILE = "fota_orchestrator.db"
@@ -22,8 +20,6 @@ CERTS_DIR = "./app/certs"
 # Initialize MQTT publisher (optional, non-blocking)
 mqtt_publisher = FOTAMQTTPublisher(broker_host="mqtt-broker", enabled=True)
 
-<<<<<<< HEAD
-=======
 # Get Vault KMS client
 vault_client = get_vault_client()
 
@@ -111,6 +107,8 @@ def ensure_directories():
     """Create required directories for firmware and certificates"""
     os.makedirs(FIRMWARE_DIR, exist_ok=True)
     os.makedirs(CERTS_DIR, exist_ok=True)
+    # Also create shared certs directory for CA certificate
+    os.makedirs("./shared/certs", exist_ok=True)
     print(f"[DIAGNOSTIC] Directories ensured: {FIRMWARE_DIR}, {CERTS_DIR}", flush=True)
 
 @asynccontextmanager
@@ -120,7 +118,6 @@ async def lifespan(app: FastAPI):
         init_db()
         ensure_directories()
         mqtt_publisher.connect()  # Optional notification layer
-
         # Check Vault KMS health
         vault_ready = await vault_client.health_check()
         if vault_ready:
@@ -138,7 +135,7 @@ async def lifespan(app: FastAPI):
     print("[DIAGNOSTIC] Lifespan shutdown sequence triggered.", flush=True)
     mqtt_publisher.disconnect()  # Cleanup on shutdown
 
-app = FastAPI(title="Secure FOTA Orchestrator Server — mTLS + MQTT Notifications", lifespan=lifespan)
+app = FastAPI(title="Secure FOTA Orchestrator Server — mTLS + Vault KMS + MQTT Notifications", lifespan=lifespan)
 
 def get_device_certificate_cn(request: Request) -> str:
     """
@@ -238,16 +235,23 @@ def compute_file_hash(file_path: str) -> str:
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint with TLS and MQTT status"""
+    """Health check endpoint with Vault KMS, TLS and MQTT status"""
     mqtt_status = mqtt_publisher.get_status()
+    vault_ready = await vault_client.health_check()
+    
     return {
         "status": "healthy",
-        "service": "FOTA Orchestrator mTLS Server",
+        "service": "FOTA Orchestrator mTLS Server + Vault KMS",
         "tls_requirement": "TLS v1.2 minimum (TLS v1.3 supported)",
-        "architecture": "Transport Boundary (mTLS + HTTPS Pull) + Verification Boundary (ECDSA-SHA256 + Ledger) + Notification Layer (MQTT optional)",
+        "architecture": "Transport Boundary (mTLS + HTTPS Pull) + Verification Boundary (ECDSA-SHA256 + Vault + Ledger) + Notification Layer (MQTT optional)",
+        "vault_kms": {
+            "status": "connected" if vault_ready else "disconnected",
+            "endpoint": "http://127.0.0.1:8200/v1/"
+        },
         "mqtt": mqtt_status,
         "channels": {
             "https_transport": "Firmware download (secure, always required)",
+            "vault_signing": "Firmware signing with HSM (Vault Transit Engine)",
             "mqtt_notification": "Update notifications (optional, convenience)"
         },
         "endpoints": {
@@ -255,11 +259,29 @@ async def health_check():
             "firmware_list": "GET /api/v1/firmware (mTLS required)",
             "firmware_metadata": "GET /api/v1/firmware/{version}/metadata (mTLS required)",
             "firmware_binary": "GET /api/v1/firmware/{version}/binary (mTLS required)",
-            "firmware_upload": "POST /api/v1/firmware/upload (publishes MQTT notification)",
+            "firmware_upload": "POST /api/v1/firmware/upload (signs with Vault, publishes MQTT notification)",
             "ledger_validation": "POST /api/v1/ledger/validate-hash (mTLS required)",
             "audit_trail": "GET /api/v1/audit/pull-events (mTLS required)",
-            "mqtt_status": "GET /api/v1/mqtt/status"
+            "mqtt_status": "GET /api/v1/mqtt/status",
+            "vault_status": "GET /api/v1/vault/status"
         }
+    }
+
+@app.get("/api/v1/vault/status")
+async def get_vault_status():
+    """Get Vault KMS status and connectivity"""
+    vault_ready = await vault_client.health_check()
+    seal_status = await vault_client.get_seal_status()
+    ca_cert_local = vault_client.get_ca_cert_local()
+    
+    return {
+        "status": "connected" if vault_ready else "disconnected",
+        "vault_endpoint": vault_client.vault_url,
+        "transit_key": vault_client.transit_key_name,
+        "pki_role": vault_client.pki_role,
+        "seal_status": seal_status,
+        "ca_certificate_cached": ca_cert_local is not None,
+        "ca_certificate_path": vault_client.ca_cert_path
     }
 
 # ============================================================================
@@ -356,7 +378,7 @@ async def get_firmware_sig_and_key(
     cert_cn: str = Depends(get_device_certificate_cn)
 ) -> dict:
     """
-    Device pulls firmware metadata: signature, public key, and ledger hash.
+    Device pulls firmware metadata: signature (from Vault), public key (from Vault), and ledger hash.
     Used for Verification Boundary (Asymmetric Code Signing + Ledger Check).
     (HTTPS PULL mechanism - Verification Boundary)
     """
@@ -375,7 +397,9 @@ async def get_firmware_sig_and_key(
         "binary_hash": firmware["binary_hash"],
         "signature_algorithm": firmware["signature_algorithm"],
         "signature_hex": firmware["signature_hex"],
+        "signature_source": "Vault Transit Engine (ECDSA-SHA256)",
         "public_key_hex": firmware["public_key_hex"],
+        "public_key_source": "Vault PKI",
         "ledger_hash": firmware["ledger_hash"],
         "note": "Device should verify signature and query ledger before installing"
     }
@@ -502,7 +526,7 @@ async def get_pull_audit_trail(
     }
 
 # ============================================================================
-# NOTIFICATION LAYER (MQTT - Optional Enhancement)
+# FIRMWARE UPLOAD WITH VAULT KMS SIGNING
 # ============================================================================
 
 class FirmwareUpload(BaseModel):
@@ -521,9 +545,16 @@ async def upload_firmware(
     file: UploadFile = File(...)
 ):
     """
-    Upload firmware binary and publish MQTT notification.
-    HTTPS channel: Firmware secure upload and storage
-    MQTT channel: Instant notification to devices (optional)
+    Upload firmware binary, sign with Vault KMS, and publish MQTT notification.
+    
+    Process:
+    1. Save firmware to disk
+    2. Compute SHA-256 hash
+    3. Sign hash with Vault Transit Engine (ECDSA-SHA256)
+    4. Retrieve public key from Vault PKI
+    5. Store metadata in database
+    6. Publish MQTT notification (optional)
+    7. Log audit event
     """
     try:
         # Save firmware to disk
@@ -534,6 +565,22 @@ async def upload_firmware(
         
         # Compute hash
         binary_hash = compute_file_hash(firmware_path)
+        print(f"[FIRMWARE] Computed SHA-256 hash: {binary_hash[:32]}...", flush=True)
+        
+        # Sign firmware using Vault KMS Transit Engine
+        print(f"[FIRMWARE] Signing firmware {version} with Vault KMS...", flush=True)
+        signature = await vault_client.sign_firmware(binary_hash)
+        
+        if not signature:
+            raise Exception("Failed to sign firmware with Vault KMS Transit Engine")
+        
+        print(f"[FIRMWARE] Signature obtained: {signature[:60]}...", flush=True)
+        
+        # Get public key from Vault PKI
+        print(f"[FIRMWARE] Retrieving public key from Vault PKI...", flush=True)
+        public_key = await vault_client.get_public_key()
+        if not public_key:
+            raise Exception("Failed to retrieve public key from Vault PKI")
         
         # Store metadata in database
         conn = sqlite3.connect(DB_FILE)
@@ -551,9 +598,12 @@ async def upload_firmware(
                 UPDATE firmware SET 
                     binary_path = ?, 
                     binary_hash = ?,
+                    signature_hex = ?,
+                    public_key_hex = ?,
                     released_at = ?
                 WHERE version = ?
-            """, (firmware_path, binary_hash, now, version))
+            """, (firmware_path, binary_hash, signature, public_key, now, version))
+            print(f"[FIRMWARE] Updated firmware {version} in database", flush=True)
         else:
             # Insert new
             cursor.execute("""
@@ -563,8 +613,9 @@ async def upload_firmware(
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 version, hardware_target, firmware_path, binary_hash,
-                "ECDSA-SHA256", "placeholder_signature", "placeholder_public_key", now, "placeholder_ledger_hash"
+                "ECDSA-SHA256-VAULT", signature, public_key, now, "placeholder_ledger_hash"
             ))
+            print(f"[FIRMWARE] Inserted new firmware {version} into database", flush=True)
         
         conn.commit()
         conn.close()
@@ -579,22 +630,32 @@ async def upload_firmware(
                 release_notes=release_notes,
                 binary_hash=binary_hash
             )
+            print(f"[FIRMWARE] MQTT notification sent: {mqtt_notified}", flush=True)
         
         # Log audit event
         log_audit_event(
             "server", "admin", "FIRMWARE_UPLOADED",
             firmware_version=version,
             binary_hash=binary_hash,
-            details=f"Firmware {version} uploaded for {hardware_target} (MQTT notification: {mqtt_notified})"
+            signature_valid=True,
+            details=f"Firmware {version} uploaded, signed by Vault KMS Transit Engine, and notified via MQTT"
         )
+        
+        print(f"[FIRMWARE] Upload complete for version {version}", flush=True)
         
         return {
             "status": "success",
             "version": version,
             "hardware_target": hardware_target,
             "binary_hash": binary_hash,
-            "file_size": len(content),
+            "binary_size": len(content),
+            "signature_hex": signature,
+            "signature_algorithm": "ECDSA-SHA256",
+            "signature_source": "Vault Transit Engine (fota-key)",
+            "public_key_hex": public_key,
+            "public_key_source": "Vault PKI (fota-devices role)",
             "transport_channel": "HTTPS (secure upload)",
+            "signing_channel": "Vault Transit Engine (HSM-backed)",
             "notification_channel": {
                 "mqtt_enabled": mqtt_publisher.enabled,
                 "mqtt_connected": mqtt_publisher.connected,
@@ -608,7 +669,12 @@ async def upload_firmware(
         log_audit_event("server", "admin", "FIRMWARE_UPLOAD_FAILED", 
                        firmware_version=version,
                        details=f"Upload failed: {str(e)}")
+        print(f"[FIRMWARE] Upload failed: {str(e)}", flush=True)
         raise HTTPException(status_code=500, detail=f"Firmware upload failed: {str(e)}")
+
+# ============================================================================
+# NOTIFICATION LAYER (MQTT - Optional Enhancement)
+# ============================================================================
 
 @app.post("/api/v1/notifications/maintenance")
 async def publish_maintenance_notification(

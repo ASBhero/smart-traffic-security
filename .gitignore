@@ -1,22 +1,17 @@
 # Combined .gitignore
 venv/
+.venv/
 __pycache__/
-*.log
-*.tmp# Combined .gitignore
-venv/
-__pycache__/
+*.pyc
 *.log
 *.tmp
-*.pyc
 *.db
 .env
 *.pem
 *.key
 *.crt
 uploads/
-__pycache__/ 
-*.pyc 
-mqtt/data/*.db 
-mqtt/logs/*.log 
-firmware_downloaded.bin 
-app/certs/ 
+mqtt/data/*.db
+mqtt/logs/*.log
+firmware_downloaded.bin
+app/certs/
